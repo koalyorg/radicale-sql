@@ -1,0 +1,4 @@
+build/
+
+*.db
+*.egg-info
