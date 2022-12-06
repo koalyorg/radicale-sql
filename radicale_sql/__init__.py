@@ -581,10 +581,11 @@ class Storage(BaseStorage):
                 collection_metadata_table,
             ).values([dict(collection_id=parent_id, key=k, value=v) for k, v in props.items()])
             connection.execute(insert_stmt)
-        if props is not None and 'key' in props and items is not None:
-            print(items)
-            # TODO insert items
         c = Collection(self, parent_id, '/'.join(path))
+        if props is not None and 'key' in props and items is not None:
+            for i in items:
+                assert i.href is not None
+                c._upload(i.href, i, connection=connection)
         return c
 
     def create_collection(
