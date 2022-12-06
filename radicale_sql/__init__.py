@@ -401,7 +401,6 @@ class Storage(BaseStorage):
         return path_parts
 
     def _discover(self, path: str, *, connection, depth: str = "0") -> Iterable["radicale.types.CollectionOrItem"]:
-        logger.info("path = %s, depth = %s", path, depth)
         if path == '/':
             return [Collection(self, self._root_collection.id, '')]
         path_parts = self._split_path(path)
@@ -525,8 +524,6 @@ class Storage(BaseStorage):
         items: Optional[Iterable["radicale_item.Item"]]=None,
         props: Optional[Mapping[str, str]]=None,
     ) -> "BaseCollection":
-        print('creating collection')
-        print(f'href={href}, items={items}, props={props}')
         path = self._split_path(href)
         parent_id = self._root_collection.id
         collection_table = self._meta.tables['collection']
