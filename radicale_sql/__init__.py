@@ -599,6 +599,7 @@ class Storage(BaseStorage):
 
     @radicale.types.contextmanager
     def acquire_lock(self, mod: str, user: str = "") -> Iterator[None]:
+        _ = mod, user
         yield
 
     def _verify(self, *, connection) -> bool:
