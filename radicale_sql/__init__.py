@@ -251,7 +251,7 @@ class Collection(BaseCollection):
         item_history = connection.execute(select_etag_stmt).one_or_none()
         if item_history is not None:
             exists = True
-            cache_etag = item_history.etag,
+            cache_etag = item_history.etag
             history_etag = item_history.history_etag
         else:
             exists = False
@@ -376,7 +376,7 @@ class Collection(BaseCollection):
                 ),
             )
             state_row = connection.execute(select_stmt).one_or_none()
-            state = json.loads(state_row.state.decode()) if state_row is not None else {}
+            old_state = json.loads(state_row.state.decode()) if state_row is not None else {}
     
         # store new state
         select_new_state = sa.select(
@@ -416,7 +416,9 @@ class BdayCollection(Collection):
     R_FMT = (
         (re.compile('^[0-9]{8}$'), '%Y%m%d'),
         (re.compile('^--[0-9]{4}$'), '--%m%d'),
-        (re.compile('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'), '%Y-%m-%d')
+        (re.compile('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'), '%Y-%m-%d'),
+        (re.compile('^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'), '%Y-%m-%dT%H:%M:%SZ'),
+        (re.compile('^[0-9]{4}[0-9]{2}[0-9]{2}T[0-9]{2}[0-9]{2}[0-9]{2}Z$'), '%Y%m%dT%H%M%SZ'),
     )
 
     def __init__(self, storage: "Storage", id: uuid.UUID, path: str, birthday_source: uuid.UUID):
@@ -444,6 +446,8 @@ class BdayCollection(Collection):
             date = date.replace(year=datetime.datetime.now().year)
         date_end = date + datetime.timedelta(days=1)
         cal.add('vevent')
+        cal.vevent_list[-1].add('uid').value = o.uid.value
+        cal.vevent_list[-1].add('dtstamp').value = vobj_str2date(o.rev)
         cal.vevent_list[-1].add('summary').value = name
         cal.vevent_list[-1].add('dtstart').value = date.date()
         cal.vevent_list[-1].add('dtend').value = date_end.date()
@@ -454,7 +458,6 @@ class BdayCollection(Collection):
         new_vobject = self._to_calendar_entry(item.vobject_item)
         if new_vobject is None:
             return None
-        new_vobject.add('uid').value = item.uid
         assert item.href is not None
         return radicale_item.Item(
             collection=self,
