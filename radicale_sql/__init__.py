@@ -460,7 +460,34 @@ class Storage(BaseStorage):
 
 
     def move(self, item: "radicale_item.Item", to_collection: "BaseCollection", to_href: str) -> None:
-        pass
+        assert isinstance(item.collection, Collection)
+        assert isinstance(to_collection, Collection)
+        src_collection_id = item.collection._id
+        dst_collection_id = to_collection._id
+        item_table = self._meta.tables['item']
+
+        delete_stmt = sa.delete(
+            item_table,
+        ).where(
+            sa.and_(
+                item_table.c.collection_id == dst_collection_id,
+                item_table.c.name == to_href,
+            )
+        )
+        update_stmt = sa.update(
+            item_table,
+        ).values(
+            collection_id=dst_collection_id,
+            name=to_href,
+        ).where(
+            sa.and_(
+                item_table.c.collection_id == src_collection_id,
+                item_table.c.name == item.href,
+            )
+        )
+        with self._engine.begin() as connection:
+            connection.execute(delete_stmt)
+            connection.execute(update_stmt)
 
     def create_collection(
         self,
