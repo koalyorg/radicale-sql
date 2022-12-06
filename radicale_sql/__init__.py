@@ -308,6 +308,8 @@ class Collection(BaseCollection):
             connection.execute(delete_stmt)
 
     def _sync(self, *, connection, old_token: str = '') -> Tuple[str, Iterable[str]]:
+        # Parts of this method have been taken from
+        # https://github.com/Kozea/Radicale/blob/6a56a6026f6ec463d6eb77da29e03c48c0c736c6/radicale/storage/multifilesystem/sync.py
         _prefix = 'http://radicale.org/ns/sync/'
         collection_state_table = self._storage._meta.tables['collection_state']
         def check_token_name(token_name: str) -> bool:
@@ -330,7 +332,7 @@ class Collection(BaseCollection):
 
         # compute new state
         for href, item in itertools.chain(
-            ((item.href, item) for item in self.get_all()),
+            ((item.href, item) for item in self._get_all(connection=connection)),
             ((href, None) for href in self._get_deleted_history_refs(connection=connection))
         ):
             assert isinstance(href, str)
