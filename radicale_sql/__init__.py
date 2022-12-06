@@ -104,7 +104,6 @@ class Collection(BaseCollection):
             for i in self._get_all(connection=c):
                 yield i
 
-
     def _upload(self, href: str, item: "radicale_item.Item", *, connection) -> "radicale_item.Item":
         item_table = self._storage._meta.tables['item']
 
@@ -140,6 +139,7 @@ class Collection(BaseCollection):
             connection.execute(insert_stmt)
         else:
             connection.execute(update_stmt)
+        self._update_history_etag(href, item, connection=connection)
         res = list(self._get_multi([href], connection=connection))[0][1]
         assert res is not None
         return res
@@ -470,7 +470,7 @@ class BdayCollection(Collection):
     def _last_modified(self, *, connection) -> str:
         return self._birthday_source_collection._last_modified(connection=connection)
 
-def create_collection(*args, birthday_source: Optional[uuid.UUID], **kwargs):
+def create_collection(*args, birthday_source: Optional[uuid.UUID], **kwargs) -> Collection:
     if birthday_source is not None:
         c = BdayCollection
         kwargs['birthday_source'] = birthday_source
@@ -493,6 +493,28 @@ class Storage(BaseStorage):
             path_parts = path_parts[:-1]
         return path_parts
 
+    def _get_collection(self, id, *, connection) -> "BaseCollection":
+        collection_table = self._meta.tables['collection']
+        collection_metadata_table = self._meta.tables['collection_metadata']
+        select_stmt = sa.select(
+            collection_table.c,
+            collection_metadata_table.c.value.cast(sa.Uuid()).label('birthday_source'),
+        ).select_from(
+            collection_table.join(
+                collection_metadata_table,
+                sa.and_(
+                    collection_table.c.id == collection_metadata_table.c.collection_id,
+                    collection_metadata_table.c.key == 'birthday_source',
+                ),
+                isouter=True,
+            ),
+        ).where(
+            collection_table.c.id == id,
+        )
+        row = connection.execute(select_stmt).one()
+        # TODO: path
+        return create_collection(self, id, '', birthday_source=row.birthday_source)
+
     def _discover(self, path: str, *, connection, depth: str = "0") -> Iterable["radicale.types.CollectionOrItem"]:
         if path == '/':
             return [create_collection(self, self._root_collection.id, '', birthday_source=None)]
@@ -508,6 +530,8 @@ class Storage(BaseStorage):
             collection_table.c.parent_id.label('parent_id'),
             collection_table.c.modified,
             collection_table.c.name,
+            sa.literal(None, sa.LargeBinary()).label('data'),
+            sa.literal('collection', sa.String(16)).label('type_'),
             collection_metadata_table.c.value.cast(sa.Uuid()).label('birthday_source'),
         ).select_from(
             collection_table.join(
@@ -518,7 +542,18 @@ class Storage(BaseStorage):
                 ),
                 isouter=True,
             )
-        )
+        ).union_all(sa.select(
+            item_table.c.id,
+            item_table.c.collection_id.label('parent_id'),
+            item_table.c.modified,
+            item_table.c.name,
+            item_table.c.data,
+            sa.literal('item', sa.String(16)).label('type_'),
+            sa.literal(None, sa.Uuid()).label('birthday_source'),
+        ).select_from(
+            item_table
+        ))
+
         i = 0
         select_from = select_collection_or_item.alias('data')
         aliases = [select_from]
@@ -557,6 +592,13 @@ class Storage(BaseStorage):
         self_collection = connection.execute(select_stmt).one_or_none()
         if self_collection is None:
             return []
+        if self_collection.type_ != 'collection':
+            return [radicale_item.Item(
+                collection=self._get_collection(self_collection.parent_id, connection=connection),
+                href=self_collection.name,
+                last_modified=self_collection.modified,
+                text=self_collection.data.decode(),
+            )]
         self_collection = create_collection(self, self_collection.id, '/'.join(path_parts), birthday_source=self_collection.birthday_source)
         l += [self_collection]
         if select_sub_stmt is not None:
@@ -566,6 +608,7 @@ class Storage(BaseStorage):
                 path += row.name
                 l += [create_collection(self, row.id, path, birthday_source=row.birthday_source)]
             l += list(self_collection._get_all(connection=connection))
+        print(';;;; discovered items')
         return l
 
     def discover(self, path: str, depth: str = "0") -> Iterable["radicale.types.CollectionOrItem"]:
@@ -600,6 +643,9 @@ class Storage(BaseStorage):
         )
         connection.execute(delete_stmt)
         connection.execute(update_stmt)
+        to_collection._update_history_etag(to_href, item, connection=connection)
+        assert item.href is not None
+        item.collection._update_history_etag(item.href, None, connection=connection)
 
     def move(self, item: "radicale_item.Item", to_collection: "BaseCollection", to_href: str) -> None:
         with self._engine.begin() as c:
