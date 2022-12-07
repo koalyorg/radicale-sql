@@ -74,7 +74,6 @@ def test_caldav():
 
         calendar0_updates = calendar0.objects_by_sync_token(calendar0_token)
         assert len(list(calendar0_updates)) == 1
-        #assert list(calendar0_updates)[0].is_deleted, list(calendar0_updates)[0]
         try:
             list(calendar0_updates)[0].load()
         except caldav.lib.error.NotFoundError:
