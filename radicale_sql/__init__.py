@@ -12,9 +12,6 @@ import itertools
 import json
 from hashlib import sha256
 from typing import Optional, Union, Tuple, Iterable, Iterator, Mapping
-
-import radicale
-import radicale.config
 import radicale.types
 from radicale.storage import BaseStorage, BaseCollection
 from radicale.log import logger
@@ -38,12 +35,14 @@ PLUGIN_CONFIG_SCHEMA = {
     },
 }
 
+
 class Item(radicale_item.Item):
 
-    def __init__(self, *args, last_modified: Optional[Union[str, datetime.datetime]]=None, **kwargs):
+    def __init__(self, *args, last_modified: Optional[Union[str, datetime.datetime]] = None, **kwargs):
         if last_modified is not None and isinstance(last_modified, datetime.datetime):
             last_modified = last_modified.astimezone(tz=zoneinfo.ZoneInfo('GMT')).strftime('%a, %d %b %Y %H:%M:%S GMT')
         super().__init__(*args, last_modified=last_modified, **kwargs)
+
 
 class Collection(BaseCollection):
 
@@ -70,7 +69,7 @@ class Collection(BaseCollection):
     def _get_multi(self, hrefs: Iterable[str], *, connection) -> Iterable[Tuple[str, Optional["radicale_item.Item"]]]:
         item_table = self._storage._meta.tables['item']
         hrefs_ = list(hrefs)
-        #hrefs_ = [(x,) for x in hrefs]
+        # hrefs_ = [(x,) for x in hrefs]
         if not hrefs_:
             return []
         select_stmt = sa.select(
@@ -252,7 +251,7 @@ class Collection(BaseCollection):
         )
         c = connection.execute(select_stmt).one()
         return c.modified.strftime('%a, %d %b %Y %H:%M:%S GMT')
-    
+
     @property
     def last_modified(self):
         with self._storage._engine.begin() as c:
@@ -338,7 +337,8 @@ class Collection(BaseCollection):
             sa.and_(
                 item_history_table.c.href.in_(list(self._get_deleted_history_refs(connection=connection))),
                 item_history_table.c.collection_id == self._id,
-                item_history_table.c.modified < (datetime.datetime.now() - datetime.timedelta(seconds=self._storage.configuration.get('storage', 'max_sync_token_age')))
+                item_history_table.c.modified < (datetime.datetime.now() - datetime.timedelta(
+                    seconds=self._storage.configuration.get('storage', 'max_sync_token_age')))
             ),
         )
         connection.execute(delete_stmt)
@@ -369,8 +369,8 @@ class Collection(BaseCollection):
         state = {}
         token_name_hash = sha256()
         for href, item in itertools.chain(
-            ((item.href, item) for item in self._get_all(connection=connection)),
-            ((href, None) for href in self._get_deleted_history_refs(connection=connection))
+                ((item.href, item) for item in self._get_all(connection=connection)),
+                ((href, None) for href in self._get_deleted_history_refs(connection=connection))
         ):
             assert isinstance(href, str)
             if href in state:
@@ -404,7 +404,7 @@ class Collection(BaseCollection):
             )
             state_row = connection.execute(select_stmt).one_or_none()
             old_state = json.loads(state_row.state.decode()) if state_row is not None else {}
-    
+
         # store new state
         select_new_state = sa.select(
             collection_state_table.c,
@@ -448,8 +448,8 @@ class Collection(BaseCollection):
         else:
             super().get_filtered(filters)
 
-class BdayCollection(Collection):
 
+class BdayCollection(Collection):
     R_FMT = (
         (re.compile('^[0-9]{8}$'), '%Y%m%d'),
         (re.compile('^--[0-9]{4}$'), '--%m%d'),
@@ -461,7 +461,8 @@ class BdayCollection(Collection):
     def __init__(self, storage: "Storage", id: uuid.UUID, path: str, birthday_source: uuid.UUID):
         super().__init__(storage, id, path)
         self._birthday_source = birthday_source
-        self._birthday_source_collection = Collection(storage, birthday_source, '') # TODO: ugly hack, get the correct path
+        self._birthday_source_collection = Collection(storage, birthday_source,
+                                                      '')  # TODO: ugly hack, get the correct path
 
     def __repr__(self) -> str:
         return f'BdayCollection(id={self._id}, path={self._path}, birthday_source={self._birthday_source})'
@@ -473,6 +474,7 @@ class BdayCollection(Collection):
                 if r.match(v):
                     return datetime.datetime.strptime(v, f)
             raise ValueError(f'cannot parse specified string {v}')
+
         cal = vobject.iCalendar()
         if 'bday' not in o.contents:
             return None
@@ -498,7 +500,7 @@ class BdayCollection(Collection):
         return Item(
             collection=self,
             href=item.href,
-            #href=item.href + '.ics',
+            # href=item.href + '.ics',
             last_modified=item.last_modified,
             text=new_vobject.serialize().strip(),
         )
@@ -526,6 +528,7 @@ class BdayCollection(Collection):
     def _last_modified(self, *, connection) -> str:
         return self._birthday_source_collection._last_modified(connection=connection)
 
+
 def create_collection(*args, birthday_source: Optional[uuid.UUID], **kwargs) -> Collection:
     if birthday_source is not None:
         c = BdayCollection
@@ -533,6 +536,7 @@ def create_collection(*args, birthday_source: Optional[uuid.UUID], **kwargs) -> 
     else:
         c = Collection
     return c(*args, **kwargs)
+
 
 class Storage(BaseStorage):
 
@@ -670,7 +674,8 @@ class Storage(BaseStorage):
             )]
 
         # collection found
-        self_collection = create_collection(self, self_collection.id, '/'.join(path_parts), birthday_source=self_collection.birthday_source)
+        self_collection = create_collection(self, self_collection.id, '/'.join(path_parts),
+                                            birthday_source=self_collection.birthday_source)
         l += [self_collection]
         # collection should list contents
         if depth != "0":
@@ -736,12 +741,12 @@ class Storage(BaseStorage):
             return self._move(item, to_collection, to_href, connection=c)
 
     def _create_bday_calendar(
-        self,
-        href: str,
-        *,
-        connection,
-        address_book: "BaseCollection",
-        address_props: Optional[Mapping[str, str]]=None,
+            self,
+            href: str,
+            *,
+            connection,
+            address_book: "BaseCollection",
+            address_props: Optional[Mapping[str, str]] = None,
     ) -> "BaseCollection":
         assert isinstance(address_book, Collection)
         calendar_props = {
@@ -753,12 +758,12 @@ class Storage(BaseStorage):
         return calendar
 
     def _create_collection(
-        self,
-        href: str,
-        *,
-        connection,
-        items: Optional[Iterable["radicale_item.Item"]]=None,
-        props: Optional[Mapping[str, str]]=None,
+            self,
+            href: str,
+            *,
+            connection,
+            items: Optional[Iterable["radicale_item.Item"]] = None,
+            props: Optional[Mapping[str, str]] = None,
     ) -> "BaseCollection":
         logger.debug('create_collection: %s, %s, %s', href, items, props)
         path = self._split_path(href)
@@ -832,14 +837,13 @@ class Storage(BaseStorage):
         return c
 
     def create_collection(
-        self,
-        href: str,
-        items: Optional[Iterable["radicale_item.Item"]]=None,
-        props: Optional[Mapping[str, str]]=None,
+            self,
+            href: str,
+            items: Optional[Iterable["radicale_item.Item"]] = None,
+            props: Optional[Mapping[str, str]] = None,
     ) -> "BaseCollection":
         with self._engine.begin() as c:
             return self._create_collection(href, connection=c, items=items, props=props)
-
 
     @radicale.types.contextmanager
     def acquire_lock(self, mod: str, user: str = "") -> Iterator[None]:
@@ -853,4 +857,3 @@ class Storage(BaseStorage):
     def verify(self):
         with self._engine.begin() as c:
             return self._verify(connection=c)
-

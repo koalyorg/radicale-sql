@@ -75,7 +75,7 @@ def create_meta() -> sa.MetaData:
         ),
         sa.Column(
             'name',
-            sa.String(length=128), # could be only 64 long
+            sa.String(length=128),  # could be only 64 long
             index=True,
             nullable=False,
         ),
@@ -165,6 +165,7 @@ def create_meta() -> sa.MetaData:
 
     return meta
 
+
 def create(url: str, meta: sa.MetaData) -> Tuple[sa.engine.Engine, sa.engine.Row]:
     engine = sa.create_engine(url)
     meta.create_all(engine)
@@ -184,8 +185,9 @@ def create(url: str, meta: sa.MetaData) -> Tuple[sa.engine.Engine, sa.engine.Row
                 collection,
             ).values(parent_id=None).returning(collection.c)
             root_collection = connection.execute(insert_root_collection).one()
-    
+
     return engine, root_collection
+
 
 if __name__ == '__main__':
     meta = create_meta()
