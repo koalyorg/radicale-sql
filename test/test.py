@@ -11,6 +11,7 @@ _BASE_URL = 'http://localhost:5232/'
 _PASSWORD = 'test'
 _USER = 'test'
 
+
 def test_caldav():
     client0 = None
     try:
@@ -35,7 +36,8 @@ def test_caldav():
         # obtain sync token for first event
         calendar0_updates = calendar0.objects_by_sync_token()
         calendar0_token = calendar0_updates.sync_token
-        assert set([x.url for x in calendar0_updates]) == calendar0_events, (set(calendar0_updates), set(calendar0_events))
+        assert set([x.url for x in calendar0_updates]) == calendar0_events, (
+        set(calendar0_updates), set(calendar0_events))
 
         # get changes with sync token (should give no difference)
         # do this for both calendars
@@ -81,8 +83,8 @@ def test_caldav():
         else:
             assert False
 
-        #changes = calendar.objects_by_sync_token(load_objects=True)
-        #token = changes.sync_token
+        # changes = calendar.objects_by_sync_token(load_objects=True)
+        # token = changes.sync_token
     except:
         print('failed')
         raise
@@ -91,6 +93,7 @@ def test_caldav():
     finally:
         if client0 is not None:
             client0.close()
+
 
 if __name__ == '__main__':
     test_caldav()
