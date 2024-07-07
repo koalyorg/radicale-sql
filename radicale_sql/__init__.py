@@ -21,6 +21,7 @@ from radicale.log import logger
 from radicale import item as radicale_item
 import vobject
 import sqlalchemy as sa
+import xml.etree.ElementTree as ET
 
 from . import db
 
@@ -105,6 +106,21 @@ class Collection(BaseCollection):
         )
         for row in connection.execute(select_stmt):
             yield self._row_to_item(row)
+
+    def _get_contains(self, text) -> Iterator["radicale_item.Item"]:
+        with self._storage._engine.begin() as c:
+            item_table = self._storage._meta.tables['item']
+            select_stmt = sa.select(
+                item_table.c,
+            ).select_from(
+                item_table,
+            ).where(
+                item_table.c.collection_id == self._id,
+            ).where(
+                item_table.c.data.contains(text.encode('utf-8')),
+            )
+            for row in c.execute(select_stmt):
+                yield self._row_to_item(row)
 
     def get_all(self) -> Iterator["radicale_item.Item"]:
         with self._storage._engine.begin() as c:
@@ -421,6 +437,16 @@ class Collection(BaseCollection):
     def sync(self, old_token: str = '') -> Tuple[str, Iterable[str]]:
         with self._storage._engine.begin() as c:
             return self._sync(connection=c, old_token=old_token)
+
+    def get_filtered(self, filters: Iterable[ET.Element]
+                     ) -> Iterable[Tuple["radicale_item.Item", bool]]:
+        if len(filters) == 1 and len(filters[0]) == 1 and len(filters[0][0]) == 1:
+            filter = filters[0][0][0]
+            if "text-match" in filter.tag and filter.get('match-type') == "contains":
+                for item in self._get_contains(filter.text):
+                    yield item, False
+        else:
+            super().get_filtered(filters)
 
 class BdayCollection(Collection):
 
