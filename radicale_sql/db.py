@@ -37,7 +37,7 @@ def create_meta() -> sa.MetaData:
             'name',
             sa.String(128),
             index=True,
-            nullable=True,
+            nullable=False,
         ),
         sa.UniqueConstraint('parent_id', 'name'),
     )
@@ -113,7 +113,7 @@ def create_meta() -> sa.MetaData:
             'name',
             sa.String(128),
             index=True,
-            nullable=True,
+            nullable=False,
         ),
         sa.Column(
             'data',

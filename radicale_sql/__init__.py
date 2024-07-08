@@ -465,17 +465,8 @@ class Storage(BaseStorage):
 
     def _get_collection(self, id, *, connection) -> "BaseCollection":
         collection_table = self._meta.tables['collection']
-        collection_metadata_table = self._meta.tables['collection_metadata']
         select_stmt = sa.select(
             collection_table.c,
-        ).select_from(
-            collection_table.join(
-                collection_metadata_table,
-                sa.and_(
-                    collection_table.c.id == collection_metadata_table.c.collection_id,
-                ),
-                isouter=True,
-            ),
         ).where(
             collection_table.c.id == id,
         )
