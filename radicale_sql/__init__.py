@@ -442,6 +442,13 @@ class Collection(BaseCollection):
         else:
             super().get_filtered(filters)
 
+    def has_uid(self, uid: str) -> bool:
+        items = self._get_contains(uid)
+        for item in items:
+            if item.uid == uid:
+                return True
+        return False
+
 
 def create_collection(*args, **kwargs) -> Collection:
     c = Collection
