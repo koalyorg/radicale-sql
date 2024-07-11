@@ -440,13 +440,13 @@ class Collection(BaseCollection):
 
     def get_filtered(self, filters: Iterable[ET.Element]
                      ) -> Iterable[Tuple["radicale_item.Item", bool]]:
-        if len(filters) == 1 and len(filters[0]) == 1 and len(filters[0][0]) == 1:
-            filter = filters[0][0][0]
-            if "text-match" in filter.tag and filter.get('match-type') == "contains":
-                for item in self._get_contains(filter.text):
-                    yield item, False
+        if (len(filters) == 1 and len(filters[0]) == 1 and len(filters[0][0]) == 1\
+                and "text-match" in filters[0][0][0].tag
+                and filters[0][0][0].get('match-type') == "contains") :
+            for item in self._get_contains(filter.text):
+                yield item, False
         else:
-            super().get_filtered(filters)
+            yield from super().get_filtered(filters)
 
 
 class BdayCollection(Collection):
