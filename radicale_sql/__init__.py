@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 
 import os
-import re
 import binascii
 import datetime
 import zoneinfo
@@ -16,7 +15,6 @@ import radicale.types
 from radicale.storage import BaseStorage, BaseCollection
 from radicale.log import logger
 from radicale import item as radicale_item
-import vobject
 import sqlalchemy as sa
 import xml.etree.ElementTree as ET
 
@@ -27,10 +25,6 @@ PLUGIN_CONFIG_SCHEMA = {
         'db_url': {
             'value': '',
             'type': str,
-        },
-        'generate_birthday_calendars': {
-            'value': "False",
-            'type': bool,
         },
     },
 }
@@ -448,93 +442,16 @@ class Collection(BaseCollection):
         else:
             yield from super().get_filtered(filters)
 
-
-class BdayCollection(Collection):
-    R_FMT = (
-        (re.compile('^[0-9]{8}$'), '%Y%m%d'),
-        (re.compile('^--[0-9]{4}$'), '--%m%d'),
-        (re.compile('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'), '%Y-%m-%d'),
-        (re.compile('^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'), '%Y-%m-%dT%H:%M:%SZ'),
-        (re.compile('^[0-9]{4}[0-9]{2}[0-9]{2}T[0-9]{2}[0-9]{2}[0-9]{2}Z$'), '%Y%m%dT%H%M%SZ'),
-    )
-
-    def __init__(self, storage: "Storage", id: uuid.UUID, path: str, birthday_source: uuid.UUID):
-        super().__init__(storage, id, path)
-        self._birthday_source = birthday_source
-        self._birthday_source_collection = Collection(storage, birthday_source,
-                                                      '')  # TODO: ugly hack, get the correct path
-
-    def __repr__(self) -> str:
-        return f'BdayCollection(id={self._id}, path={self._path}, birthday_source={self._birthday_source})'
-
-    def _to_calendar_entry(self, o: vobject.base.Component) -> Optional[vobject.base.Component]:
-        def vobj_str2date(content_line):
-            v = content_line.value
-            for r, f in self.R_FMT:
-                if r.match(v):
-                    return datetime.datetime.strptime(v, f)
-            raise ValueError(f'cannot parse specified string {v}')
-
-        cal = vobject.iCalendar()
-        if 'bday' not in o.contents:
-            return None
-        date = vobj_str2date(o.bday)
-        if date.year <= 1900:
-            date = date.replace(year=datetime.datetime.now().year)
-        date_end = date + datetime.timedelta(days=1)
-
-        cal.add('vevent')
-        cal.vevent_list[-1].add('uid').value = o.uid.value
-        cal.vevent_list[-1].add('dtstamp').value = vobj_str2date(o.rev)
-        cal.vevent_list[-1].add('summary').value = o.fn.value
-        cal.vevent_list[-1].add('dtstart').value = date.date()
-        cal.vevent_list[-1].add('dtend').value = date_end.date()
-        cal.vevent_list[-1].add('rrule').value = 'FREQ=YEARLY'
-        return cal
-
-    def _item_transform(self, item: "radicale_item.Item") -> Optional["radicale_item.Item"]:
-        new_vobject = self._to_calendar_entry(item.vobject_item)
-        if new_vobject is None:
-            return None
-        assert item.href is not None
-        return Item(
-            collection=self,
-            href=item.href,
-            # href=item.href + '.ics',
-            last_modified=item.last_modified,
-            text=new_vobject.serialize().strip(),
-        )
-
-    def _get_multi(self, hrefs: Iterable[str], *, connection) -> Iterable[Tuple[str, Optional["radicale_item.Item"]]]:
-        l = []
-        for href, i in self._birthday_source_collection._get_multi(hrefs, connection=connection):
-            l += [(href, self._item_transform(i) if i is not None else None)]
-        return l
-
-    def _get_all(self, *, connection) -> Iterator["radicale_item.Item"]:
-        for i in self._birthday_source_collection._get_all(connection=connection):
-            ni = self._item_transform(i)
-            if ni is not None:
-                yield ni
-
-    def _upload(self, href: str, item: "radicale_item.Item", *, connection) -> "radicale_item.Item":
-        raise NotImplementedError
-
-    def _delete(self, *, connection, href: Optional[str] = None) -> None:
-        if href is not None:
-            raise NotImplementedError
-        super()._delete(connection=connection, href=href)
-
-    def _last_modified(self, *, connection) -> str:
-        return self._birthday_source_collection._last_modified(connection=connection)
+    def has_uid(self, uid: str) -> bool:
+        items = self._get_contains(uid)
+        for item in items:
+            if item.uid == uid:
+                return True
+        return False
 
 
-def create_collection(*args, birthday_source: Optional[uuid.UUID], **kwargs) -> Collection:
-    if birthday_source is not None:
-        c = BdayCollection
-        kwargs['birthday_source'] = birthday_source
-    else:
-        c = Collection
+def create_collection(*args, **kwargs) -> Collection:
+    c = Collection
     return c(*args, **kwargs)
 
 
@@ -555,25 +472,14 @@ class Storage(BaseStorage):
 
     def _get_collection(self, id, *, connection) -> "BaseCollection":
         collection_table = self._meta.tables['collection']
-        collection_metadata_table = self._meta.tables['collection_metadata']
         select_stmt = sa.select(
             collection_table.c,
-            collection_metadata_table.c.value.cast(sa.Uuid()).label('birthday_source'),
-        ).select_from(
-            collection_table.join(
-                collection_metadata_table,
-                sa.and_(
-                    collection_table.c.id == collection_metadata_table.c.collection_id,
-                    collection_metadata_table.c.key == 'birthday_source',
-                ),
-                isouter=True,
-            ),
         ).where(
             collection_table.c.id == id,
         )
         row = connection.execute(select_stmt).one()
         # TODO: path
-        return create_collection(self, id, '', birthday_source=row.birthday_source)
+        return create_collection(self, id, '')
 
     def _collection_updated(self, collection_id, *, connection):
         collection_table = self._meta.tables['collection']
@@ -601,14 +507,12 @@ class Storage(BaseStorage):
 
     def _discover(self, path: str, *, connection, depth: str = "0") -> Iterable["radicale.types.CollectionOrItem"]:
         if path == '/':
-            return [create_collection(self, self._root_collection.id, '', birthday_source=None)]
+            return [create_collection(self, self._root_collection.id, '')]
         path_parts = self._split_path(path)
 
         collection_table = self._meta.tables['collection']
-        collection_metadata_table = self._meta.tables['collection_metadata']
         item_table = self._meta.tables['item']
 
-        # TODO: rename variable, it only selects collections now
         select_collection_or_item = sa.select(
             collection_table.c.id,
             collection_table.c.parent_id.label('parent_id'),
@@ -616,16 +520,6 @@ class Storage(BaseStorage):
             collection_table.c.name,
             sa.literal(None, sa.LargeBinary()).label('data'),
             sa.literal('collection', sa.String(16)).label('type_'),
-            collection_metadata_table.c.value.cast(sa.Uuid()).label('birthday_source'),
-        ).select_from(
-            collection_table.join(
-                collection_metadata_table,
-                sa.and_(
-                    collection_table.c.id == collection_metadata_table.c.collection_id,
-                    collection_metadata_table.c.key == 'birthday_source',
-                ),
-                isouter=True,
-            )
         ).union_all(sa.select(
             item_table.c.id,
             item_table.c.collection_id.label('parent_id'),
@@ -633,7 +527,6 @@ class Storage(BaseStorage):
             item_table.c.name,
             item_table.c.data,
             sa.literal('item', sa.String(16)).label('type_'),
-            sa.literal(None, sa.Uuid()).label('birthday_source'),
         ).select_from(
             item_table
         ))
@@ -674,8 +567,7 @@ class Storage(BaseStorage):
             )]
 
         # collection found
-        self_collection = create_collection(self, self_collection.id, '/'.join(path_parts),
-                                            birthday_source=self_collection.birthday_source)
+        self_collection = create_collection(self, self_collection.id, '/'.join(path_parts))
         l += [self_collection]
         # collection should list contents
         if depth != "0":
@@ -694,7 +586,7 @@ class Storage(BaseStorage):
                 path = '/'.join(path_parts)
                 path += '/'
                 path += row.name
-                l += [create_collection(self, row.id, path, birthday_source=row.birthday_source)]
+                l += [create_collection(self, row.id, path)]
             l += list(self_collection._get_all(connection=connection))
         return l
 
@@ -739,23 +631,6 @@ class Storage(BaseStorage):
     def move(self, item: "radicale_item.Item", to_collection: "BaseCollection", to_href: str) -> None:
         with self._engine.begin() as c:
             return self._move(item, to_collection, to_href, connection=c)
-
-    def _create_bday_calendar(
-            self,
-            href: str,
-            *,
-            connection,
-            address_book: "BaseCollection",
-            address_props: Optional[Mapping[str, str]] = None,
-    ) -> "BaseCollection":
-        assert isinstance(address_book, Collection)
-        calendar_props = {
-            **(address_props or {}),
-            'birthday_source': str(address_book._id),
-            'tag': 'VCALENDAR',
-        }
-        calendar = self._create_collection(href, connection=connection, props=calendar_props)
-        return calendar
 
     def _create_collection(
             self,
@@ -821,11 +696,6 @@ class Storage(BaseStorage):
             ).values([dict(collection_id=parent_id, key=k, value=v) for k, v in props.items()])
             connection.execute(insert_stmt)
         c = Collection(self, parent_id, '/'.join(path))
-        if self.configuration.get('storage', 'generate_birthday_calendars') \
-                and props is not None and props.get('tag') == 'VADDRESSBOOK':
-            bday_href = '/'.join(path[:-1] + [str(uuid.uuid4())])
-            bday_href = f'/{bday_href}/'
-            self._create_bday_calendar(bday_href, connection=connection, address_book=c, address_props=props)
         if props is not None and 'tag' in props and items is not None:
             suffix = '.bin'
             if props['tag'] == 'VADDRESSBOOK':
