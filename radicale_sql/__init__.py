@@ -437,7 +437,7 @@ class Collection(BaseCollection):
         if (len(filters) == 1 and len(filters[0]) == 1 and len(filters[0][0]) == 1\
                 and "text-match" in filters[0][0][0].tag
                 and filters[0][0][0].get('match-type') == "contains") :
-            for item in self._get_contains(filter.text):
+            for item in self._get_contains(filters[0][0][0].text):
                 yield item, False
         else:
             yield from super().get_filtered(filters)
