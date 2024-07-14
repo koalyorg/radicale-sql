@@ -149,11 +149,11 @@ url=sqlite:///{database_path}
         response = requests.request('PROPFIND', url, auth=HTTPBasicAuth(username, password))
         self.assertEqual(response.status_code, 207)
 
-    def add_ics_file(self, username, password, collection, filename, content):
+    def add_ics_file(self, username, password, collection, filename, content, return_code=[201, 204]):
         url = f'{radicale_url}{username}/{collection}/{filename}'
         headers = {'Content-Type': 'text/calendar'}
         response = requests.put(url, data=content, headers=headers, auth=(username, password))
-        self.assertIn(response.status_code, [201, 204])
+        self.assertIn(response.status_code, return_code)
 
     def parse_ics(self, content):
         return vobject.readOne(content)
@@ -345,6 +345,97 @@ END:VCALENDAR"""
             delete_response = requests.request('DELETE', collection_url, auth=auth)
             self.assertIn(delete_response.status_code, [200, 204, 404],
                           f'Failed to delete collection {collection_name}')
+
+    def test_add_two_events_same_uid(self):
+        username = 'user1'
+        password = 'password'
+        collection = 'test_same_uid'
+        filename1 = 'event_same_uid.ics'
+        filename2 = 'event_same_uid_2.ics'
+        event_content = """BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:same_uid@example.com
+DTSTAMP:20200714T170000Z
+ORGANIZER;CN=User One:MAILTO:user1@example.com
+DTSTART:20200714T170000Z
+DTEND:20200714T180000Z
+SUMMARY:Test Event with Same UID
+END:VEVENT
+END:VCALENDAR"""
+
+        # Create a new collection
+        self.create_collection(username, password, collection)
+
+        self.add_ics_file(username, password, collection, filename1, event_content)
+        self.add_ics_file(username, password, collection, filename2, event_content, return_code=[409])
+
+        url = f'{radicale_url}{username}/{collection}/'
+        response = requests.request('PROPFIND', url, auth=HTTPBasicAuth(username, password))
+        self.assertEqual(response.status_code, 207)
+
+        self.delete_collection(username, password, collection)
+
+    def test_report_filters_text_match_contains(self):
+        username = 'user1'
+        password = 'password'
+        collection = 'test_text_match_contains'
+        self.create_collection(username, password, collection)
+
+        # Add events to the collection
+        event_contents = ["""BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:unique_event_1@example.com
+DTSTAMP:20200714T170000Z
+ORGANIZER;CN=User One:MAILTO:user1@example.com
+DTSTART:20200714T170000Z
+DTEND:20200714T180000Z
+SUMMARY:Event with Special Keyword
+END:VEVENT
+END:VCALENDAR""", """BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:unique_event_2@example.com
+DTSTAMP:20200715T170000Z
+ORGANIZER;CN=User One:MAILTO:user1@example.com
+DTSTART:20200715T170000Z
+DTEND:20200715T180000Z
+SUMMARY:Another Event
+END:VEVENT
+END:VCALENDAR"""
+                          ]
+
+        for i, content in enumerate(event_contents, start=1):
+            self.add_ics_file(username, password, collection, f"event_{i}.ics", content)
+
+        # Perform a REPORT request with text-match filter
+        report_xml = '''<?xml version="1.0" encoding="UTF-8"?>
+<C:calendar-query xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:prop xmlns:D="DAV:">
+    <D:getetag/>
+    <C:calendar-data/>
+  </D:prop>
+  <C:filter>
+    <C:comp-filter name="VCALENDAR">
+      <C:comp-filter name="VEVENT">
+        <C:prop-filter name="SUMMARY">
+          <C:text-match match-type="contains">Special Keyword</C:text-match>
+        </C:prop-filter>
+      </C:comp-filter>
+    </C:comp-filter>
+  </C:filter>
+</C:calendar-query>'''
+        headers = {'Content-Type': 'application/xml'}
+        url = f'{radicale_url}{username}/{collection}/'
+        response = requests.request('REPORT', url, data=report_xml, headers=headers,
+                                    auth=HTTPBasicAuth(username, password))
+
+        # Verify that the response contains the event with the specific summary
+        self.assertIn("Event with Special Keyword", response.text)
+        self.assertNotIn("Another Event", response.text)
+
+        self.delete_collection(username, password, collection)
 
 
 if __name__ == '__main__':
