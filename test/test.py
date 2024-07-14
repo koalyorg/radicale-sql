@@ -1,99 +1,347 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+import os
+import unittest
+import subprocess
+import time
+import requests
+import vobject
+from requests.auth import HTTPBasicAuth
+from passlib.apache import HtpasswdFile
+import logging
 
-import uuid
-import asyncio
-import datetime
-import caldav
-import caldav.lib
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-_BASE_URL = 'http://localhost:5232/'
-_PASSWORD = 'test'
-_USER = 'test'
+# Configurations
+config_path = os.path.abspath('./radicale_config')
+database_path = os.path.abspath('./test-data.db')
+htpasswd_path = os.path.abspath('./.htpasswd')
+radicale_port = 5232
+radicale_host = '127.0.0.1'
+radicale_url = f'http://{radicale_host}:{radicale_port}/'
+
+CREATE_CALENDAR_XML = '''<?xml version="1.0" encoding="UTF-8" ?>
+<create xmlns="DAV:" xmlns:CAL="urn:ietf:params:xml:ns:caldav">
+  <set>
+    <prop>
+      <resourcetype>
+        <collection />
+        <CAL:calendar />
+      </resourcetype>
+    </prop>
+  </set>
+</create>'''
+
+ics_contents = {
+    'user1': """BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:uid1@example.com
+DTSTAMP:20200714T170000Z
+ORGANIZER;CN=User One:MAILTO:user1@example.com
+DTSTART:20200714T170000Z
+DTEND:20200714T180000Z
+SUMMARY:User One Event
+END:VEVENT
+END:VCALENDAR""",
+    'user2': """BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:uid2@example.com
+DTSTAMP:20200714T170000Z
+ORGANIZER;CN=User Two:MAILTO:user2@example.com
+DTSTART:20200714T170000Z
+DTEND:20200714T180000Z
+SUMMARY:User Two Event
+END:VEVENT
+END:VCALENDAR""",
+    'user3': """BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:uid3@example.com
+DTSTAMP:20200714T170000Z
+ORGANIZER;CN=User Three:MAILTO:user3@example.com
+DTSTART:20200714T170000Z
+DTEND:20200714T180000Z
+SUMMARY:User Three Event
+END:VEVENT
+END:VCALENDAR"""
+}
 
 
-def test_caldav():
-    client0 = None
-    try:
-
-        # create calendars
-        client0 = caldav.DAVClient(url=_BASE_URL, username='test', password='test')
-        principal0 = client0.principal()
-        calendar0 = principal0.make_calendar(name=f'test-calendar-{uuid.uuid4()}')
-        print(f'calendar url = {calendar0.url}')
-
-        print(calendar0.events())
-        calendar0_events = set([x.url for x in calendar0.events()])
-        assert calendar0_events == set()
-
-        # create event and store it
-        calendar0_events |= {calendar0.save_event(
-            dtstart=datetime.datetime.now(),
-            dtend=datetime.datetime.now() + datetime.timedelta(hours=1),
-            summary='event0',
-        ).url}
-
-        # obtain sync token for first event
-        calendar0_updates = calendar0.objects_by_sync_token()
-        calendar0_token = calendar0_updates.sync_token
-        assert set([x.url for x in calendar0_updates]) == calendar0_events, (
-        set(calendar0_updates), set(calendar0_events))
-
-        # get changes with sync token (should give no difference)
-        # do this for both calendars
-        calendar0_updates = calendar0.objects_by_sync_token(calendar0_token)
-        assert set(calendar0_updates) == set()
-
-        # add another event to the calendar
-        calendar0_events |= {calendar0.save_event(
-            dtstart=datetime.datetime.now(),
-            dtend=datetime.datetime.now() + datetime.timedelta(hours=1),
-            summary='event0',
-        ).url}
-
-        calendar0_updates = calendar0.objects_by_sync_token(calendar0_token)
-        assert len(set(calendar0_updates)) == 1
-        calendar0_token = calendar0_updates.sync_token
-
-        # check that sync token returns 0 updates
-        calendar0_updates = calendar0.objects_by_sync_token(calendar0_token)
-        assert set(calendar0_updates) == set()
-
-        # update event
-        calendar0_any_event = calendar0.event_by_url(list(calendar0_events)[0])
-        calendar0_any_event.load()
-        calendar0_any_event.vobject_instance.vevent_list[0].summary.value = 'event0-edit0'
-        calendar0_any_event.save()
-
-        # check that we get the edited event
-        calendar0_updates = calendar0.objects_by_sync_token(calendar0_token)
-        assert len(set(calendar0_updates)) == 1
-        calendar0_token = calendar0_updates.sync_token
-
-        # delete this event
-        calendar0_any_event = calendar0.event_by_url(list(calendar0_events)[0])
-        calendar0_any_event.delete()
-
-        calendar0_updates = calendar0.objects_by_sync_token(calendar0_token)
-        assert len(list(calendar0_updates)) == 1
+class TestRadicaleServer(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
         try:
-            list(calendar0_updates)[0].load()
-        except caldav.lib.error.NotFoundError:
-            pass
-        else:
-            assert False
+            if os.path.exists(database_path):
+                os.remove(database_path)
+            if os.path.exists(htpasswd_path):
+                os.remove(htpasswd_path)
 
-        # changes = calendar.objects_by_sync_token(load_objects=True)
-        # token = changes.sync_token
-    except:
-        print('failed')
-        raise
-    else:
-        print('success')
-    finally:
-        if client0 is not None:
-            client0.close()
+            # Create .htpasswd file with user credentials
+            ht = HtpasswdFile(htpasswd_path, new=True)
+            ht.set_password('user1', 'password')
+            ht.set_password('user2', 'password')
+            ht.set_password('user3', 'password')
+            ht.save()
+
+            # Update Radicale config to use .htpasswd file
+            with open(config_path, 'w') as config_file:
+                config_file.write(f"""
+[auth]
+type = htpasswd
+htpasswd_filename = {htpasswd_path}
+htpasswd_encryption = md5
+[server]
+hosts = {radicale_host}:{radicale_port}
+[storage]
+type=radicale_sql
+url=sqlite:///{database_path}
+""")
+
+            cls.process = subprocess.Popen(
+                ['radicale', '--config', config_path],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+
+            # Wait for the server to start
+            for _ in range(10):
+                if cls.process.poll() is not None:
+                    raise Exception("Radicale server terminated prematurely")
+                try:
+                    response = requests.get(radicale_url)
+                    if response.status_code == 200:
+                        logger.info("Radicale server started successfully")
+                        break
+                except requests.ConnectionError:
+                    time.sleep(0.5)
+            else:
+                raise Exception("Radicale server did not start within the expected time")
+
+        except Exception as e:
+            cls.tearDownClass()
+            raise e
+
+    @classmethod
+    def tearDownClass(cls):
+        if hasattr(cls, 'process'):
+            cls.process.terminate()
+            cls.process.wait()
+        if os.path.exists(database_path):
+            os.remove(database_path)
+        if os.path.exists(htpasswd_path):
+            os.remove(htpasswd_path)
+
+    def test_radicale_is_running(self):
+        response = requests.get(radicale_url)
+        self.assertEqual(response.status_code, 200)
+
+    def create_collection(self, username, password, collection):
+        url = f'{radicale_url}{username}/{collection}/'
+        response = requests.request('MKCOL', url, data=CREATE_CALENDAR_XML, auth=HTTPBasicAuth(username, password))
+        self.assertIn(response.status_code, [201, 204])
+
+        response = requests.request('PROPFIND', url, auth=HTTPBasicAuth(username, password))
+        self.assertEqual(response.status_code, 207)
+
+    def add_ics_file(self, username, password, collection, filename, content):
+        url = f'{radicale_url}{username}/{collection}/{filename}'
+        headers = {'Content-Type': 'text/calendar'}
+        response = requests.put(url, data=content, headers=headers, auth=(username, password))
+        self.assertIn(response.status_code, [201, 204])
+
+    def parse_ics(self, content):
+        return vobject.readOne(content)
+
+    def test_user_access(self):
+        users = ['user1', 'user2', 'user3']
+        password = 'password'
+
+        # Create collections and add .ics files for each user
+        for user, ics_content in ics_contents.items():
+            with self.subTest(user=user):
+                self.create_collection(user, password, 'calendar')
+                self.add_ics_file(user, password, 'calendar', 'event.ics', ics_content)
+
+        # Verify that each user can only access their own collection and data
+        for user, ics_content in ics_contents.items():
+            with self.subTest(user=user):
+                response = requests.get(f'{radicale_url}{user}/calendar/event.ics', auth=(user, password))
+                self.assertEqual(response.status_code, 200)
+
+                parsed_response = self.parse_ics(response.text)
+                parsed_ics_content = self.parse_ics(ics_content)
+
+                self.assertEqual(parsed_response.serialize(), parsed_ics_content.serialize())
+
+                for other_user in users:
+                    if other_user != user:
+                        response = requests.get(f'{radicale_url}{other_user}/calendar/event.ics', auth=(user, password))
+                        self.assertEqual(response.status_code, 403)
+
+        for user, ics_content in ics_contents.items():
+            with self.subTest(user=user):
+                self.delete_collection(user, password, 'calendar')
+
+    def test_invalid_authentication(self):
+        response = requests.get(f'{radicale_url}user1/calendar/', auth=('user1', 'wrongpassword'))
+        self.assertEqual(response.status_code, 401)
+
+    def delete_collection(self, username, password, collection):
+        url = f'{radicale_url}{username}/{collection}/'
+        response = requests.request('DELETE', url, auth=HTTPBasicAuth(username, password))
+        self.assertIn(response.status_code, [200, 204, 404])
+
+    def test_delete_collection(self):
+        username = 'user1'
+        password = 'password'
+        collection = 'calendar'
+        self.create_collection(username, password, collection)
+        self.delete_collection(username, password, collection)
+        response = requests.get(f'{radicale_url}{username}/{collection}/', auth=(username, password))
+        self.assertEqual(response.status_code, 404)
+
+    def update_ics_file(self, username, password, collection, filename, new_content):
+        url = f'{radicale_url}{username}/{collection}/{filename}'
+        headers = {'Content-Type': 'text/calendar'}
+        response = requests.put(url, data=new_content, headers=headers, auth=(username, password))
+        self.assertIn(response.status_code, [201, 204])
+
+    def test_update_ics_file(self):
+        username = 'user1'
+        password = 'password'
+        collection = 'calendar'
+        filename = 'event.ics'
+        new_content = """BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:uid1@example.com
+DTSTAMP:20200714T170000Z
+ORGANIZER;CN=User One:MAILTO:user1@example.com
+DTSTART:20200715T170000Z
+DTEND:20200715T180000Z
+SUMMARY:Updated User One Event
+END:VEVENT
+END:VCALENDAR"""
+        self.create_collection(username, password, collection)
+        self.add_ics_file(username, password, collection, filename, ics_contents['user1'])
+        self.update_ics_file(username, password, collection, filename, new_content)
+        response = requests.get(f'{radicale_url}{username}/{collection}/{filename}', auth=(username, password))
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Updated User One Event", response.text)
+        self.delete_collection(username, password, collection)
+
+    def test_fetch_nonexistent_ics_file(self):
+        self.create_collection('user1', 'password', 'calendar')
+        response = requests.get(f'{radicale_url}user1/calendar/nonexistent.ics', auth=('user1', 'password'))
+        self.assertEqual(response.status_code, 404)
+        self.delete_collection('user1', 'password', 'calendar')
+
+    def test_collection_permissions(self):
+        # Assuming 'user1' tries to access 'user2's collection
+        self.create_collection('user1', 'password', 'calendar')
+        self.create_collection('user2', 'password', 'calendar')
+        response = requests.get(f'{radicale_url}user2/calendar/', auth=('user1', 'password'))
+        self.assertEqual(response.status_code, 403)
+        self.delete_collection('user1', 'password', 'calendar')
+        self.delete_collection('user2', 'password', 'calendar')
+
+    def test_large_ics_file_handling_single_event(self):
+        username = 'user1'
+        password = 'password'
+        collection = 'large_calendar'
+        filename = 'large_event.ics'
+        # Generate a large ICS file content with a single event but a large description
+        large_description = "A" * 100000  # 10,000 characters for example
+        large_ics_content = f"""BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:uid-single-event@example.com
+DTSTAMP:20200714T170000Z
+ORGANIZER;CN=User One:MAILTO:{username}@example.com
+DTSTART:20200714T170000Z
+DTEND:20200714T180000Z
+SUMMARY:Large Single Event
+DESCRIPTION:{large_description}
+END:VEVENT
+END:VCALENDAR"""
+        # Create a new calendar collection
+        self.create_collection(username, password, collection)
+        # Add the large ICS file to the collection
+        self.add_ics_file(username, password, collection, filename, large_ics_content)
+        # Fetch the added ICS file
+        response = requests.get(f'{radicale_url}{username}/{collection}/{filename}', auth=(username, password))
+        self.assertEqual(response.status_code, 200)
+        # Assert the fetched content matches the original large ICS file content
+        parsed_response = self.parse_ics(response.text)
+        parsed_ics_content = self.parse_ics(large_ics_content)
+        self.assertEqual(parsed_response.serialize(), parsed_ics_content.serialize())
+        # Clean up by deleting the collection
+        self.delete_collection(username, password, collection)
+
+    def test_concurrent_access(self):
+        import threading
+
+        def add_event(username, password, collection, filename, content):
+            self.add_ics_file(username, password, collection, filename, content)
+
+        username = 'user1'
+        password = 'password'
+        collection = 'concurrent_access'
+
+        self.create_collection(username, password, collection)
+
+        threads = []
+        for i in range(0, 5):  # Create 5 events concurrently
+            filename = f'event_{i}.ics'
+            content = f"""BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:uid{i}@example.com
+DTSTAMP:20200714T170000Z
+ORGANIZER;CN=User One:MAILTO:{username}@example.com
+DTSTART:20200714T170000Z
+DTEND:20200714T180000Z
+SUMMARY:Event {i}
+END:VEVENT
+END:VCALENDAR"""
+            thread = threading.Thread(target=add_event, args=(username, password, collection, filename, content))
+            threads.append(thread)
+            thread.start()
+
+        for thread in threads:
+            thread.join()
+
+        # Verify all events were added
+        for i in range(0, 5):
+            filename = f'event_{i}.ics'
+            response = requests.get(f'{radicale_url}{username}/{collection}/{filename}', auth=(username, password))
+            self.assertEqual(response.status_code, 200)
+
+        self.delete_collection(username, password, collection)
+
+    def test_rapid_create_delete_collections(self):
+        username = 'user1'
+        password = 'password'
+        base_url = f'{radicale_url}{username}/'
+        auth = HTTPBasicAuth(username, password)
+        headers = {'Content-Type': 'application/xml'}
+
+        for i in range(10):  # Example: Create and delete 10 collections
+            collection_name = f'test_collection_{i}'
+            collection_url = f'{base_url}{collection_name}/'
+
+            # Create collection
+            create_response = requests.request('MKCOL', collection_url, data=CREATE_CALENDAR_XML, auth=auth,
+                                               headers=headers)
+            self.assertIn(create_response.status_code, [201, 204], f'Failed to create collection {collection_name}')
+
+            # Delete collection
+            delete_response = requests.request('DELETE', collection_url, auth=auth)
+            self.assertIn(delete_response.status_code, [200, 204, 404],
+                          f'Failed to delete collection {collection_name}')
 
 
 if __name__ == '__main__':
-    test_caldav()
+    unittest.main()

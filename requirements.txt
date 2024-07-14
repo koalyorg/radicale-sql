@@ -1,0 +1,4 @@
+radicale
+sqlalchemy
+pytest
+requests
