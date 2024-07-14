@@ -77,6 +77,8 @@ class TestRadicaleServer(unittest.TestCase):
                 os.remove(database_path)
             if os.path.exists(htpasswd_path):
                 os.remove(htpasswd_path)
+            if os.path.exists(config_path):
+                os.remove(config_path)
 
             # Create .htpasswd file with user credentials
             ht = HtpasswdFile(htpasswd_path, new=True)
@@ -132,6 +134,8 @@ url=sqlite:///{database_path}
             os.remove(database_path)
         if os.path.exists(htpasswd_path):
             os.remove(htpasswd_path)
+        if os.path.exists(config_path):
+            os.remove(config_path)
 
     def test_radicale_is_running(self):
         response = requests.get(radicale_url)
