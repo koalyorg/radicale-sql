@@ -403,8 +403,7 @@ DTSTART:20200715T170000Z
 DTEND:20200715T180000Z
 SUMMARY:Another Event
 END:VEVENT
-END:VCALENDAR"""
-                          ]
+END:VCALENDAR"""]
 
         for i, content in enumerate(event_contents, start=1):
             self.add_ics_file(username, password, collection, f"event_{i}.ics", content)

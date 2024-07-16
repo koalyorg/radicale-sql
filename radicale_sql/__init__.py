@@ -436,7 +436,7 @@ class Collection(BaseCollection):
                      ) -> Iterable[Tuple["radicale_item.Item", bool]]:
         if (len(filters) == 1 and len(filters[0]) == 1 and len(filters[0][0]) == 1\
                 and "text-match" in filters[0][0][0].tag
-                and filters[0][0][0].get('match-type') == "contains") :
+                and filters[0][0][0].get('match-type') in ["contains", "equals"]):
             for item in self._get_contains(filters[0][0][0].text):
                 yield item, False
         else:
