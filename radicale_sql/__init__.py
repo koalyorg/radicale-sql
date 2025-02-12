@@ -16,6 +16,7 @@ from radicale.storage import BaseStorage, BaseCollection
 from radicale.log import logger
 from radicale import item as radicale_item
 import sqlalchemy as sa
+from sqlalchemy.exc import IntegrityError
 import xml.etree.ElementTree as ET
 
 from . import db
@@ -409,14 +410,18 @@ class Collection(BaseCollection):
             collection_state_table.c.name == token_name,
         )
         if connection.execute(select_new_state).one_or_none() is None:
-            insert_stmt = sa.insert(
-                collection_state_table,
-            ).values(
-                collection_id=self._id,
-                name=token_name,
-                state=json.dumps(state).encode(),
-            )
-            connection.execute(insert_stmt)
+            try:
+                insert_stmt = sa.insert(
+                    collection_state_table,
+                ).values(
+                    collection_id=self._id,
+                    name=token_name,
+                    state=json.dumps(state).encode(),
+                )
+
+                connection.execute(insert_stmt)
+            except IntegrityError as e:
+                pass
 
         changes = []
         for href, history_etag in state.items():
