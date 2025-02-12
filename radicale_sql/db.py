@@ -84,6 +84,7 @@ def create_meta() -> sa.MetaData:
             sa.LargeBinary(),
             nullable=False,
         ),
+        sa.UniqueConstraint('collection_id', 'name'),
     )
 
     sa.Table(
