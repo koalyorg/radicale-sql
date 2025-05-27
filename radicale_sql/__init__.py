@@ -507,8 +507,8 @@ class Storage(BaseStorage):
                 item_table.c.collection_id == collection_id,
                 item_table.c.name == href,
             ),
-        ).returning(item_table.c)).one()
-        self._collection_updated(item_row.collection_id, connection=connection)
+        ))
+        self._collection_updated(collection_id, connection=connection)
 
     def _discover(self, path: str, *, connection, depth: str = "0") -> Iterable["radicale.types.CollectionOrItem"]:
         if path == '/':
