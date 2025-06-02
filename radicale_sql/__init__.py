@@ -725,7 +725,7 @@ class Storage(BaseStorage):
             return self._create_collection(href, connection=c, items=items, props=props)
 
     @radicale.types.contextmanager
-    def acquire_lock(self, mod: str, user: str = "") -> Iterator[None]:
+    def acquire_lock(self, mod: str, user: str = "", path: str = "") -> Iterator[None]:
         _ = mod, user
         yield
 
