@@ -161,7 +161,7 @@ class Collection(BaseCollection):
         self._update_history_etag(href, item, connection=connection)
         res = list(self._get_multi([href], connection=connection))[0][1]
         assert res is not None
-        return res
+        return res, None
 
     def upload(self, href: str, item: "radicale_item.Item") -> "radicale_item.Item":
         with self._storage._engine.begin() as c:
@@ -507,8 +507,8 @@ class Storage(BaseStorage):
                 item_table.c.collection_id == collection_id,
                 item_table.c.name == href,
             ),
-        ).returning(item_table.c)).one()
-        self._collection_updated(item_row.collection_id, connection=connection)
+        ))
+        self._collection_updated(collection_id, connection=connection)
 
     def _discover(self, path: str, *, connection, depth: str = "0") -> Iterable["radicale.types.CollectionOrItem"]:
         if path == '/':
@@ -725,7 +725,7 @@ class Storage(BaseStorage):
             return self._create_collection(href, connection=c, items=items, props=props)
 
     @radicale.types.contextmanager
-    def acquire_lock(self, mod: str, user: str = "", path: str = "") -> Iterator[None]:
+    def acquire_lock(self, mod: str, user: str = "", path: str = "", request: str = "") -> Iterator[None]:
         _ = mod, user
         yield
 
