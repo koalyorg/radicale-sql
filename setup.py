@@ -9,4 +9,9 @@ setup(
     packages=['radicale_sql'],
     description='A SQL backed storage for radicale.',
     url='https://github.com/koalyorg/radicale-sql',
+    install_requires=[
+        "requests",
+        "sqlalchemy",
+    ],
+
 )
