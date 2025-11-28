@@ -121,8 +121,14 @@ class Collection(BaseCollection):
             for i in self._get_all(connection=c):
                 yield i
 
-    def _upload(self, href: str, item: "radicale_item.Item", *, connection) -> "radicale_item.Item":
+    def _upload(
+            self, href: str, item: "radicale_item.Item", *, connection
+    ) -> Tuple["radicale_item.Item", Optional["radicale_item.Item"]]:
         item_table = self._storage._meta.tables['item']
+
+        # Get the old item before uploading
+        old_item_result = list(self._get_multi([href], connection=connection))
+        old_item = old_item_result[0][1] if old_item_result else None
 
         item_serialized = item.serialize().encode()
         select_stmt = sa.select(
@@ -159,11 +165,13 @@ class Collection(BaseCollection):
             connection.execute(update_stmt)
             self._storage._item_updated(self._id, href, connection=connection)
         self._update_history_etag(href, item, connection=connection)
-        res = list(self._get_multi([href], connection=connection))[0][1]
-        assert res is not None
-        return res, None
+        uploaded_item = list(self._get_multi([href], connection=connection))[0][1]
+        assert uploaded_item is not None
+        return uploaded_item, old_item
 
-    def upload(self, href: str, item: "radicale_item.Item") -> "radicale_item.Item":
+    def upload(
+            self, href: str, item: "radicale_item.Item"
+    ) -> Tuple["radicale_item.Item", Optional["radicale_item.Item"]]:
         with self._storage._engine.begin() as c:
             return self._upload(href, item, connection=c)
 
