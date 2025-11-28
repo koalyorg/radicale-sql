@@ -10,7 +10,7 @@ import string
 import itertools
 import json
 from hashlib import sha256
-from typing import Optional, Union, Tuple, Iterable, Iterator, Mapping, Callable, ContextManager, Set
+from typing import Optional, Union, Tuple, Iterable, Iterator, Mapping, Callable, ContextManager, Set, Dict, List
 import radicale.types
 from radicale.storage import BaseStorage, BaseCollection
 from radicale.log import logger
@@ -648,7 +648,7 @@ class Storage(BaseStorage):
             connection,
             items: Optional[Iterable["radicale_item.Item"]] = None,
             props: Optional[Mapping[str, str]] = None,
-    ) -> "BaseCollection":
+    ) -> Tuple["BaseCollection", Dict[str, radicale_item.Item], List[str]]:
         logger.debug('create_collection: %s, %s, %s', href, items, props)
         path = self._split_path(href)
         parent_id = self._root_collection.id
@@ -679,7 +679,29 @@ class Storage(BaseStorage):
                 )
                 c = connection.execute(insert_stmt).one()
             parent_id = c.id
+
+        replaced_items: Dict[str, "radicale_item.Item"] = {}
+        new_item_hrefs: List[str] = []
+        existing_item_map: Dict[str, "radicale_item.Item"] = {}
+
         if items is not None or props is not None:
+            # Get existing items before deletion to track replacements
+            if items is not None:
+                select_existing_items = sa.select(
+                    item_table.c,
+                ).select_from(
+                    item_table,
+                ).where(
+                    item_table.c.collection_id == parent_id,
+                )
+                for row in connection.execute(select_existing_items):
+                    existing_item_map[row.name] = Item(
+                        collection=None,
+                        href=row.name,
+                        last_modified=row.modified,
+                        text=row.data.decode(),
+                    )
+
             # drop all subcollections and items
             delete_collections_stmt = sa.delete(
                 collection_table,
@@ -712,15 +734,21 @@ class Storage(BaseStorage):
             elif props['tag'] == 'VCALENDAR':
                 suffix = '.ics'
             for i in items:
-                c._upload(i.uid + suffix, i, connection=connection)
-        return c
+                item_href = i.uid + suffix
+                c._upload(item_href, i, connection=connection)
+                # Track if this is a replacement or new item
+                if item_href in existing_item_map:
+                    replaced_items[item_href] = existing_item_map[item_href]
+                else:
+                    new_item_hrefs.append(item_href)
+        return c, replaced_items, new_item_hrefs
 
     def create_collection(
             self,
             href: str,
             items: Optional[Iterable["radicale_item.Item"]] = None,
             props: Optional[Mapping[str, str]] = None,
-    ) -> "BaseCollection":
+    ) -> Tuple["BaseCollection", Dict[str, radicale_item.Item], List[str]]:
         with self._engine.begin() as c:
             return self._create_collection(href, connection=c, items=items, props=props)
 
