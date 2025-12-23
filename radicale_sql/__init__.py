@@ -27,6 +27,10 @@ PLUGIN_CONFIG_SCHEMA = {
             'value': '',
             'type': str,
         },
+        'notifications_hooks': {
+            'value': 1,
+            'type': int,
+        },
     },
 }
 
@@ -126,9 +130,11 @@ class Collection(BaseCollection):
     ) -> Tuple["radicale_item.Item", Optional["radicale_item.Item"]]:
         item_table = self._storage._meta.tables['item']
 
-        # Get the old item before uploading
-        old_item_result = list(self._get_multi([href], connection=connection))
-        old_item = old_item_result[0][1] if old_item_result else None
+        # Get the old item before uploading (only if notifications_hooks is enabled)
+        old_item = None
+        if self._storage.configuration.get('storage', 'notifications_hooks'):
+            old_item_result = list(self._get_multi([href], connection=connection))
+            old_item = old_item_result[0][1] if old_item_result else None
 
         item_serialized = item.serialize().encode()
         select_stmt = sa.select(
@@ -694,7 +700,8 @@ class Storage(BaseStorage):
 
         if items is not None or props is not None:
             # Get existing items before deletion to track replacements
-            if items is not None:
+            # (only if notifications_hooks is enabled)
+            if items is not None and self.configuration.get('storage', 'notifications_hooks'):
                 select_existing_items = sa.select(
                     item_table.c,
                 ).select_from(
@@ -745,6 +752,7 @@ class Storage(BaseStorage):
                 item_href = i.uid + suffix
                 c._upload(item_href, i, connection=connection)
                 # Track if this is a replacement or new item
+                # (only meaningful if notifications_hooks is enabled)
                 if item_href in existing_item_map:
                     replaced_items[item_href] = existing_item_map[item_href]
                 else:
